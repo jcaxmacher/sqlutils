@@ -2,6 +2,7 @@ import re
 import logging
 import pyodbc
 import inspect
+from functools import wraps
 
 logger = logging.getLogger('sqlutils')
 
@@ -46,7 +47,7 @@ def h(bs):
         return bs
 
 class DbConnections(object):
-    def __init__(self, conns):
+    def __init__(self, conns={}, **kwargs):
         self.current = None
         self.funcs = {}
         self.conns = {}
@@ -54,7 +55,13 @@ class DbConnections(object):
         for k, conn_string in conns.iteritems():
             self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
             self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
+        self.add(**kwargs)
 
+    def add(self, **kwargs):
+        for k, conn_string in kwargs.iteritems():
+            self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
+            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
+            
     def run(self, query, params=()):
         """Execute an SQL query
 
@@ -72,13 +79,16 @@ class DbConnections(object):
             del caller
 
         # get connection ifor for caller
-        conn_name = self.funcs.get('%s.%s' % (mod.__name__, func))
+        conn_name = self.funcs.get('%s.%s' % (getattr(mod, '__name__',
+                                                      '__main__'), func))
         conn = self.conns.get(conn_name)
         cache_key = (conn_name, query, params)
 
         # return cached results if present
         cached_results = self.cache.get(cache_key)
         if cached_results:
+            logger.debug('Getting cached result: %s, %s' % (remove_ws(query),
+                                                            repr(params)))
             return cached_results
 
         # translate hex params to bytearrays
@@ -104,7 +114,6 @@ class DbConnections(object):
             for row in cursor.fetchall():
                 results.append(row)
             cursor.close()
-            #data = tuple([dict(zip(column_names, row)) for row in rows])
             self.cache[cache_key] = results
             return results
 
@@ -112,7 +121,8 @@ class DbConnections(object):
         def dec(f):
             _func = '%s.%s' % (f.__module__, f.func_name)
             self.funcs[_func] = c
+            @wraps(f)
             def wrapper(*args, **kwargs):
-                f()
+                return f()
             return wrapper
         return dec
