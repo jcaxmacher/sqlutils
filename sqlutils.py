@@ -20,32 +20,6 @@ def is_hex_string(s):
     return isinstance(s, str) and len(s) > 2 and s[:2] == '0x' \
         and len(s) % s == 0
 
-def exec_sql(conn, query, params=()):
-    """Execute an SQL query
-
-    Given a select query, query params and a connection
-    string, execute the query and return the results as
-    a list of dict, where the dict keys are the column names
-    """
-    if isinstance(params, tuple):
-        new_params = tuple([b(p) if is_hex_string(p) else p \
-                            for p in params])
-    elif is_hex_string(params):
-        new_params = b(params)
-    else:
-        new_params = params
-
-    logger.debug('Executing sql: %s, %s' % (remove_ws(query),
-                                            repr(params)))
-    cursor = conn.execute(query, new_params)
-    results = []
-    results.append([column[0] for column in cursor.description])
-    for row in cursor.fetchall():
-        results.append(row)
-    cursor.close()
-    #data = [dict(zip(column_names, row)) for row in rows]
-    return results
-
 def b(hs):
     """Convert a hex string to bytearray
 
@@ -79,6 +53,7 @@ class DbConnections(object):
         self.cache = {}
         for k, conn_string in conns.iteritems():
             self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
+            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
 
     def run(self, query, params=()):
         """Execute an SQL query
