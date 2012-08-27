@@ -72,7 +72,7 @@ class DbConnections(object):
             del caller
 
         # get connection ifor for caller
-        conn_name = self.funcs.get('%s.%s' % (mod, func))
+        conn_name = self.funcs.get('%s.%s' % (mod.__name__, func))
         conn = self.conns.get(conn_name)
         cache_key = (conn_name, query, params)
 
@@ -104,15 +104,15 @@ class DbConnections(object):
             for row in cursor.fetchall():
                 results.append(row)
             cursor.close()
-            data = tuple([dict(zip(column_names, row)) for row in rows])
-            self.cache[cache_key] = data
+            #data = tuple([dict(zip(column_names, row)) for row in rows])
+            self.cache[cache_key] = results
             return results
 
     def choose(self, c):
         def dec(f):
+            _func = '%s.%s' % (f.__module__, f.func_name)
+            self.funcs[_func] = c
             def wrapper(*args, **kwargs):
-                _func = '%s.%s' % (f.func_name, f.__module__)
-                self.funcs[_func] = c
                 f()
             return wrapper
         return dec
