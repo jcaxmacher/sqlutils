@@ -6,12 +6,6 @@ from functools import wraps
 
 logger = logging.getLogger('sqlutils')
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l.
-    """
-    for i in xrange(0, len(l), n):
-        yield l[i:i+n]
-
 def remove_ws(query):
     """Remove excessive whitespace from string"""
     return re.sub(r'\s+', r' ', query.replace('\n','').strip())
@@ -21,12 +15,17 @@ def is_hex_string(s):
     return isinstance(s, str) and len(s) > 2 and s[:2] == '0x' \
         and len(s) % s == 0
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in xrange(0, len(l), n):
+        yield l[i:i+n]
+
 def b(hs):
     """Convert a hex string to bytearray
 
     Given a string of an even length, containing
-    hexidecimal characters, convert it to an array
-    of bytes
+    hexidecimal characters (e.g., 0xAB34F1), convert
+    it to an array of bytes (chopping of the 0x)
     """
     try:
         return bytearray([int(c, 16) for c in chunks(hs[2:], 2)])
