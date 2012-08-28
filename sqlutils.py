@@ -6,6 +6,33 @@ from functools import wraps
 
 logger = logging.getLogger('sqlutils')
 
+def flatten(l):
+    for i in l:
+        if is_seq(i) and not isinstance(i, bytearray):
+            for j in flatten(i):
+                yield j
+        else:
+            yield i
+
+def qmarks(l):
+    """Create a string of question marks separated by commas"""
+    return '(%s)' % ','.join(len(l) * '?')
+
+def query_in_location(query):
+    """Get the parameter locations of IN components of an sql query"""
+    tokens = query.split()
+    in_params = []
+    for i in xrange(len(tokens)):
+        if tokens[i] == '(?)':
+            in_params.append((i, True))
+        elif tokens[i] == '?':
+            in_params.append((i, False))
+    return (tokens, in_params)
+
+def is_seq(item):
+    """Check for sequences"""
+    return True if getattr(item, '__iter__', None) else False
+
 def remove_ws(query):
     """Remove excessive whitespace from string"""
     return re.sub(r'\s+', r' ', query.replace('\n','').strip())
@@ -13,7 +40,7 @@ def remove_ws(query):
 def is_hex_string(s):
     """Test for "hex"-ness of a string"""
     return isinstance(s, str) and len(s) > 2 and s[:2] == '0x' \
-        and len(s) % s == 0
+        and len(s) % 2 == 0
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
@@ -60,6 +87,15 @@ class DbConnections(object):
             self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
             self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
             
+    def _process_params(self, params):
+        new_params = []
+        if is_seq(params):
+            for p in params:
+                new_params.append(p if not is_seq(p) else tuple(p))
+        else:
+            new_params.append(params)
+        return tuple(new_params)
+
     def run(self, query, params=()):
         """Execute an SQL query
 
@@ -81,7 +117,9 @@ class DbConnections(object):
         # get connection ifor for caller
         conn_name = self.funcs.get('%s.%s' % (mod_name, func))
         conn = self.conns.get(conn_name)
-        cache_key = (conn_name, query, params)
+
+        new_params = self._process_params(params)
+        cache_key = (conn_name, query, new_params)
 
         # return cached results if present
         cached_results = self.cache.get(cache_key)
@@ -91,23 +129,36 @@ class DbConnections(object):
             return cached_results
 
         # translate hex params to bytearrays
-        if isinstance(params, tuple):
-            new_params = tuple([b(p) if is_hex_string(p) else p \
-                                for p in params])
-        elif is_hex_string(params):
-            new_params = b(params)
-        else:
-            new_params = params
+        hexed_params = []
+        for p in new_params:
+            if is_seq(p):
+                sub_params = []
+                for i in p:
+                    sub_params.append(b(i) if is_hex_string(i) else i)
+                hexed_params.append(tuple(sub_params))
+            elif is_hex_string(p):
+                hexed_params.append(b(p))
+            else:
+                hexed_params.append(p)
+        new_params = tuple(hexed_params)
 
+        # get tokenized query and location of INs in query
+        tokens, ins = query_in_location(query)
+        for i, v in enumerate(ins):
+            if v[1]:
+                tokens[v[0]] = qmarks(new_params[i])
+
+        new_query = ' '.join(tokens)
+            
         if not conn:
             logger.debug('No connection chosen.  '
-                         'Would have run sql: %s, %s' % (remove_ws(query),
+                         'Would have run sql: %s, %s' % (new_query,
                                                 repr(params)))
             return ()
         else:
-            logger.debug('Running sql: %s, %s' % (remove_ws(query),
+            logger.debug('Running sql: %s, %s' % (new_query,
                                                 repr(params)))
-            cursor = conn.execute(query, new_params)
+            cursor = conn.execute(new_query, list(flatten(new_params)))
             results = []
             results.append([column[0] for column in cursor.description])
             for row in cursor.fetchall():
