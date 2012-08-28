@@ -47,16 +47,15 @@ def h(bs):
 
 class DbConnections(object):
     def __init__(self, conns={}, **kwargs):
-        self.current = None
-        self.funcs = {}
-        self.conns = {}
-        self.cache = {}
-        for k, conn_string in conns.iteritems():
-            self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
-            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
+        """Initialize function registry, db connection registry,
+        and the query results cache, then make the db connections
+        using the supplied connection strings in conns or kwargs"""
+        self.funcs, self.conns, self.cache = {}, {}, {}
+        self.add(**conns)
         self.add(**kwargs)
 
     def add(self, **kwargs):
+        """Make db connections and store them by short name in a dict"""
         for k, conn_string in kwargs.iteritems():
             self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
             self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
@@ -74,12 +73,13 @@ class DbConnections(object):
         try:
             func = caller[3]
             mod = inspect.getmodule(caller[0])
+            mod_name = getattr(mod, '__name__', '__main__')
         finally:
             del caller
+            del mod
 
         # get connection ifor for caller
-        conn_name = self.funcs.get('%s.%s' % (getattr(mod, '__name__',
-                                                      '__main__'), func))
+        conn_name = self.funcs.get('%s.%s' % (mod_name, func))
         conn = self.conns.get(conn_name)
         cache_key = (conn_name, query, params)
 
@@ -117,11 +117,22 @@ class DbConnections(object):
             return results
 
     def choose(self, c):
+        """Takes a db connection name and returns a decorator
+
+        Given the shortname of a db connection that has been
+        registered with the DbConnection object, create a decorator
+        function that links that connection name with the given
+        function in the DbConnections.funcs dict
+        """
         def dec(f):
+            """Takes a function and returns it unchanged
+
+            Takes a function and registers the function details
+            along with the associated db connection name in 
+            the DbConnections.funcs dict, returning the function
+            without modification
+            """
             _func = '%s.%s' % (f.__module__, f.func_name)
             self.funcs[_func] = c
-            @wraps(f)
-            def wrapper(*args, **kwargs):
-                return f()
-            return wrapper
+            return f
         return dec
