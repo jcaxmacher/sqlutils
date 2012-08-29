@@ -209,7 +209,7 @@ class DbConnections(object):
         conn = kwargs.get('conn')
         new_params = list(flatten(tuplify(params, lambda i: hextobytes(i) \
                                                   if is_hex_string(i) \
-                                                  else i)
+                                                  else i)))
         new_query = self._reparamaterize_query(query, new_params)
 
         if not conn:
@@ -218,7 +218,7 @@ class DbConnections(object):
             return ()
         else:
             logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
-            results = self._run(conn, new_query, flattened_params)
+            results = self._run(conn, new_query, new_params)
             return results
 
     def choose(self, c):
