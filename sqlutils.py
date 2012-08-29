@@ -136,7 +136,8 @@ class DbConnections(object):
     def _questionmarks(self, l):
         """Create a string of question marks separated by commas"""
         if is_seq(l):
-            return '(%s)' % ','.join(len(l) * '?')
+            length = len(l) if len(l) > 0 else 1
+            return '(%s)' % ','.join(length * '?')
         else:
             return '(?)'
 
@@ -213,6 +214,10 @@ class DbConnections(object):
         new_params = list(flatten(tuplify(params, lambda i: hextobytes(i) \
                                                   if is_hex_string(i) \
                                                   else i)))
+        # Short circuit incorrect parameters hack
+        if not new_query.count('?') == len(new_params):
+            return ()
+
         if not conn:
             logger.debug('No connection chosen. Would have run sql: '
                          '%s, %s' % (new_query, repr(params)))
