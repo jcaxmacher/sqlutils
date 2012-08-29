@@ -6,13 +6,40 @@ from functools import wraps
 
 logger = logging.getLogger('sqlutils')
 
-def caller_info():
+def memoize(key_maker):
+    """Given a function which can generate hashable keys from another
+    functions arguments, memoize returns a decorator that will cache
+    the results of the decorated function"""
+    def decorator(f):
+        cache = {}
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            # Get key for cache and values that will be passed on to
+            # the decorated function through updated keyword arguments
+            key, upd = key_maker(*args, **kwargs)
+            func_name, func_module = f.func_name, f.__module__
+            if cache.get(key):
+                logger.debug('Returning from cache for %s.%s method with'
+                             ' cache key: %s' % (func_module, func_name,
+                                                 repr(key)))
+                return cache[key]
+            else:
+                kwargs.update(upd)
+                results = f(*args, **kwargs)
+                logger.debug('Caching results of execution of %s.%s'
+                             ' method' % (func_module, func_name))
+                cache[key] = results
+                return results
+        return wrapper
+    return decorator
+
+def caller_info(levels_down=1):
     """Return module and function name of function two levels
     down the stack, so- the caller of whichever function called
     this one"""
     # inspect stack for caller module and function
-    func, mod, mod_name = None, None
-    caller = inspect.stack()[2]
+    func, mod, mod_name = None, None, None
+    caller = inspect.stack()[levels_down+1]
     try:
         func = caller[3]
         mod = inspect.getmodule(caller[0])
@@ -36,7 +63,7 @@ def tuplify(l, modifier=None):
     """Convert lists and sublists to tuples
     with optional modifier of each element"""
     new_l = []
-    for i in new_l:
+    for i in l:
         if is_seq(i):
             new_l.append(tuplify(i))
         elif modifier:
@@ -45,24 +72,6 @@ def tuplify(l, modifier=None):
             new_l.append(i)
     return tuple(new_l)
 
-def qmarks(l):
-    """Create a string of question marks separated by commas"""
-    if is_seq(l):
-        return '(%s)' % ','.join(len(l) * '?')
-    else:
-        return '(?)'
-
-def query_in_location(query):
-    """Get the parameter locations of IN components of an sql query"""
-    tokens = query.split()
-    in_params = []
-    for i in xrange(len(tokens)):
-        if tokens[i] == '(?)':
-            in_params.append((i, True))
-        elif tokens[i] == '?':
-            in_params.append((i, False))
-    return (tokens, in_params)
-
 def is_seq(item):
     """Check for sequences"""
     if getattr(item, '__iter__', None) and not isinstance(item, bytearray):
@@ -70,9 +79,9 @@ def is_seq(item):
     else:
         return False
 
-def remove_ws(query):
-    """Remove excessive whitespace from string"""
-    return re.sub(r'\s+', r' ', query.replace('\n','').strip())
+def remove_ws(s):
+    """Remove whitespace from string"""
+    return ' '.join(s.split())
     
 def is_hex_string(s):
     """Test for "hex"-ness of a string"""
@@ -84,7 +93,7 @@ def chunks(l, n):
     for i in xrange(0, len(l), n):
         yield l[i:i+n]
 
-def b(hs):
+def hextobytes(hs):
     """Convert a hex string to bytearray
 
     Given a string of an even length, containing
@@ -96,7 +105,7 @@ def b(hs):
     except:
         return hs
 
-def h(bs):
+def bytestohex(bs):
     """Convert bytearray to hex string  
 
     Given a bytearray, convert it to a string of
@@ -114,7 +123,7 @@ class DbConnections(object):
         """Initialize function registry, db connection registry,
         and the query results cache, then make the db connections
         using the supplied connection strings in conns or kwargs"""
-        self.funcs, self.conns, self.cache = {}, {}, {}
+        self.funcs, self.conns = {}, {}
         self.add(**conns)
         self.add(**kwargs)
 
@@ -122,8 +131,53 @@ class DbConnections(object):
         """Make db connections and store them by short name in a dict"""
         for k, conn_string in kwargs.iteritems():
             self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
-            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, h)
+            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, bytestohex)
 
+    def _questionmarks(self, l):
+        """Create a string of question marks separated by commas"""
+        if is_seq(l):
+            return '(%s)' % ','.join(len(l) * '?')
+        else:
+            return '(?)'
+
+    def _query_in_location(self, query):
+        """Get the parameter locations of IN components of an sql query"""
+        tokens = query.split()
+        in_params = []
+        for i in xrange(len(tokens)):
+            if tokens[i] == '(?)':
+                in_params.append((i, True))
+            elif tokens[i] == '?':
+                in_params.append((i, False))
+        return (tokens, in_params)
+
+    def _reparamaterize_query(self, query, params):
+        """Add question marks as needed to support the use
+        of the IN clause in the query"""
+        tokens, ins = self._query_in_location(query)
+        for i, v in enumerate(ins):
+            if v[1]:
+                tokens[v[0]] = self._questionmarks(params[i])
+        return ' '.join(tokens)
+        
+    def _run_key_maker(self, *args, **kwargs):
+        """Generate hashable keys for the run method
+
+        Gets the database connection name for the function
+        calling the run method and makes a tuple of that
+        along with the query string and parameters.
+
+        The paramaters are scrubbed, turning them into a tuple
+        or tuple of tuples, as needed
+        """
+        mod_name, func = caller_info(levels_down=2)
+        conn_name = self.funcs.get('%s.%s' % (mod_name, func))
+        conn = self.conns.get(conn_name)
+        arg_copy = list(args)
+        query = remove_ws(arg_copy.pop(0)).lower()
+        tupled_params = tuplify(arg_copy)
+        return ((conn_name, query, tupled_params), {'conn': conn})
+        
     def _run(self, conn, query, params):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
@@ -135,53 +189,36 @@ class DbConnections(object):
         cursor.close()
         return results
 
-    def run(self, query, *params):
+    @memoize(_run_key_maker)
+    def run(self, query, *params, **kwargs):
         """Execute an SQL query
 
-        Given a select query, query params and a connection
-        string, execute the query and return the results as
-        a list of dict, where the dict keys are the column names
+        Given a select query, query params and a pyodbc connection,
+        translate the params to bytearrays as necessary and tuplify
+        them.  
+        
+        Also, modify the query string to account for uses of
+        the IN clause in the query, matching the number ofparameters
+        (ie, question marks) in the query string to the number of
+        elements in the associated param.
+
+        Return a tuple of tuples with the query results, where the
+        first element of the tuple is a tuple of the returned column
+        names.
         """
-        mod_name, func = caller_info()
+        conn = kwargs.get('conn')
+        new_params = list(flatten(tuplify(params, lambda i: hextobytes(i) \
+                                                  if is_hex_string(i) \
+                                                  else i)
+        new_query = self._reparamaterize_query(query, new_params)
 
-        # get connection for for caller
-        conn_name = self.funcs.get('%s.%s' % (mod_name, func))
-        conn = self.conns.get(conn_name)
-
-        # make params hashable, if possible
-        tupled_params = tuplify(params)
-        cache_key = (conn_name, query, tupled_params)
-
-        # return cached results if present
-        cached_results = self.cache.get(cache_key)
-        if cached_results:
-            logger.debug('Getting cached result: %s, %s' % (remove_ws(query),
-                                                            repr(params)))
-            return cached_results
-
-        # translate hex params to bytearrays
-        hexed_params = tuplify(tupled_params,
-                               lambda i: b(i) if is_hex_string(i) else i)
-
-        # get tokenized query and location of INs in query
-        tokens, ins = query_in_location(query)
-        for i, v in enumerate(ins):
-            if v[1]:
-                tokens[v[0]] = qmarks(hexed_params[i])
-
-        new_query = ' '.join(tokens)
-        flattened_params = list(flatten(hexed_params))
-            
         if not conn:
-            logger.debug('No connection chosen.  '
-                         'Would have run sql: %s, %s' % (new_query,
-                                                repr(params)))
+            logger.debug('No connection chosen. Would have run sql: '
+                         '%s, %s' % (new_query, repr(params)))
             return ()
         else:
-            logger.debug('Running sql: %s, %s' % (new_query,
-                                                repr(params)))
+            logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
             results = self._run(conn, new_query, flattened_params)
-            self.cache[cache_key] = results
             return results
 
     def choose(self, c):
