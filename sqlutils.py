@@ -178,14 +178,15 @@ class DbConnections(object):
         tupled_params = tuplify(arg_copy)
         return ((conn_name, query, tupled_params), {'conn': conn})
         
-    def _run(self, conn, query, params):
+    def _run(self, conn, query, params, headers=False):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
         cursor = conn.execute(query, params)
         results = []
-        results.append([column[0] for column in cursor.description])
+        if headers:
+            results.append([column[0] for column in cursor.description])
         for row in cursor.fetchall():
-            results.append(row)
+            results.append(tuple(row))
         cursor.close()
         return results
 
@@ -207,6 +208,7 @@ class DbConnections(object):
         names.
         """
         conn = kwargs.get('conn')
+        headers = kwargs.get('headers', False)
         new_query = self._reparamaterize_query(query, params)
         new_params = list(flatten(tuplify(params, lambda i: hextobytes(i) \
                                                   if is_hex_string(i) \
@@ -217,10 +219,10 @@ class DbConnections(object):
             return ()
         else:
             logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
-            results = self._run(conn, new_query, new_params)
+            results = self._run(conn, new_query, new_params, headers=headers)
             return results
 
-    def choose(self, c):
+    def use(self, c):
         """Takes a db connection name and returns a decorator
 
         Given the shortname of a db connection that has been
