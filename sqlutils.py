@@ -65,7 +65,7 @@ def tuplify(l, modifier=None):
     new_l = []
     for i in l:
         if is_seq(i):
-            new_l.append(tuplify(i))
+            new_l.append(tuplify(i, modifier=modifier))
         elif modifier:
             new_l.append(modifier(i))
         else:
@@ -85,8 +85,8 @@ def remove_ws(s):
     
 def is_hex_string(s):
     """Test for "hex"-ness of a string"""
-    return isinstance(s, str) and len(s) > 2 and s[:2] == '0x' \
-        and len(s) % 2 == 0
+    return (isinstance(s, str) or isinstance(s, unicode)) \
+           and len(s) > 2 and s[:2] == '0x' and len(s) % 2 == 0
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
@@ -207,11 +207,10 @@ class DbConnections(object):
         names.
         """
         conn = kwargs.get('conn')
+        new_query = self._reparamaterize_query(query, params)
         new_params = list(flatten(tuplify(params, lambda i: hextobytes(i) \
                                                   if is_hex_string(i) \
                                                   else i)))
-        new_query = self._reparamaterize_query(query, new_params)
-
         if not conn:
             logger.debug('No connection chosen. Would have run sql: '
                          '%s, %s' % (new_query, repr(params)))
