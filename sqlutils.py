@@ -2,6 +2,7 @@ import re
 import logging
 import pyodbc
 import inspect
+from exceptions import Exception
 from functools import wraps
 
 logger = logging.getLogger('sqlutils')
@@ -118,6 +119,9 @@ def bytestohex(bs):
     except:
         return bs
 
+class SqlQueryParamsError(Exception):
+    pass
+
 class DbConnections(object):
     def __init__(self, conns={}, **kwargs):
         """Initialize function registry, db connection registry,
@@ -216,7 +220,9 @@ class DbConnections(object):
                                                   else i)))
         # Short circuit incorrect parameters hack
         if not new_query.count('?') == len(new_params):
-            return ()
+            logger.debug('Parameters supplied do not match query.'
+                         ' Raising exception.')
+            raise SqlQueryParamsError()
 
         if not conn:
             logger.debug('No connection chosen. Would have run sql: '
