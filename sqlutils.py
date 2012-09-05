@@ -46,6 +46,9 @@ def hex_tupler(l):
 class SqlQueryParamsError(Exception):
     pass
 
+class NoResultSetError(Exception):
+    pass
+
 class DbConnections(object):
     def __init__(self, conns={}, **kwargs):
         """Initialize function registry, db connection registry,
@@ -111,6 +114,14 @@ class DbConnections(object):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
         cursor = conn.execute(query, params)
+
+        # Jump resultsets until data is found
+        while not cursor.description and cursor.nextset():
+            pass
+        if not cursor.description:
+            logger.debug('No resultset for query %s' % query)
+            raise NoResultSetError()
+
         results = []
         if headers:
             results.append([column[0] for column in cursor.description])
