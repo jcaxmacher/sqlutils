@@ -92,7 +92,7 @@ class DbConnections(object):
                 tokens[v[0]] = self._questionmarks(params[i])
         return ' '.join(tokens)
         
-    def _run_key_maker(self, *args, **kwargs):
+    def _query_key_maker(self, *args, **kwargs):
         """Generate hashable keys for the run method
 
         Gets the database connection name for the function
@@ -110,28 +110,35 @@ class DbConnections(object):
         tupled_params = tuplify(arg_copy)
         return ((conn_name, query, tupled_params), {'conn': conn})
         
-    def _run(self, conn, query, params, headers=False):
+    def _submit(self, conn, query, params, headers=False, results=True):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
         cursor = conn.execute(query, params)
 
-        # Jump resultsets until data is found
-        while not cursor.description and cursor.nextset():
-            pass
-        if not cursor.description:
-            logger.debug('No resultset for query %s' % query)
-            raise NoResultSetError()
+        if results:
+            # Jump resultsets until data is found
+            while not cursor.description and cursor.nextset():
+                pass
+            if not cursor.description:
+                logger.debug('No resultset for query %s' % query)
+                raise NoResultSetError()
 
-        results = []
-        if headers:
-            results.append([column[0] for column in cursor.description])
-        for row in cursor.fetchall():
-            results.append(tuple(row))
-        cursor.close()
-        return results
+            results = []
+            if headers:
+                results.append([column[0] for column in cursor.description])
+            for row in cursor.fetchall():
+                results.append(tuple(row))
+            cursor.close()
+            return results
+        else:
+            return ()
 
-    @memoize(_run_key_maker)
     def run(self, query, *params, **kwargs):
+        kwargs['results'] = False
+        return self.query(query, *params, **kwargs)
+
+    @memoize(_query_key_maker)
+    def query(self, query, *params, **kwargs):
         """Execute an SQL query
 
         Given a select query, query params and a pyodbc connection,
@@ -149,6 +156,7 @@ class DbConnections(object):
         """
         conn = kwargs.get('conn')
         headers = kwargs.get('headers', False)
+        results = kwargs.get('results', True)
         new_query = self._reparamaterize_query(query, params)
         new_params = pipe(params, [
             hex_tupler,
@@ -166,7 +174,8 @@ class DbConnections(object):
             return ()
         else:
             logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
-            results = self._run(conn, new_query, new_params, headers=headers)
+            results = self._submit(conn, new_query, new_params,
+                                   headers=headers, results=results)
             return results
 
     def use(self, c):
