@@ -9,11 +9,11 @@ Usage:
     @db.choose("mydb")
     def get_record(record_id):
         query = "SELECT * FROM table WHERE id = ?"
-        results = db.run(query, record_id)
+        results = db.query(query, record_id)
         ... do something with results ...
 
     @db.choose("otherdb")
     def get_other_record(record_id):
         query = "SELECT * FROM other_table WHERE id = ?"
-        results = db.run(query, record_id)
+        results = db.query(query, record_id)
         ... do something with results ...
