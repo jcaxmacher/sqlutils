@@ -133,10 +133,6 @@ class DbConnections(object):
         else:
             return ()
 
-    def run(self, query, *params, **kwargs):
-        kwargs['results'] = False
-        return self.query(query, *params, **kwargs)
-
     @memoize(_query_key_maker)
     def query(self, query, *params, **kwargs):
         """Execute an SQL query
