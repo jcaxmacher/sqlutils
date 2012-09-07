@@ -49,20 +49,11 @@ class SqlQueryParamsError(Exception):
 class NoResultSetError(Exception):
     pass
 
-class DbConnections(object):
-    def __init__(self, conns={}, **kwargs):
-        """Initialize function registry, db connection registry,
-        and the query results cache, then make the db connections
-        using the supplied connection strings in conns or kwargs"""
-        self.funcs, self.conns = {}, {}
-        self.add(**conns)
-        self.add(**kwargs)
-
-    def add(self, **kwargs):
-        """Make db connections and store them by short name in a dict"""
-        for k, conn_string in kwargs.iteritems():
-            self.conns[k] = pyodbc.connect(conn_string, autocommit=True)
-            self.conns[k].add_output_converter(pyodbc.SQL_BINARY, bytestohex)
+class DbConnection(object):
+    def __init__(self, connection_string):
+        """Initialize the connection string and connection"""
+        self.connection_string = connection_string
+        self.conn = None
 
     def _questionmarks(self, l):
         """Create a string of question marks separated by commas"""
@@ -93,27 +84,25 @@ class DbConnections(object):
         return ' '.join(tokens)
         
     def _query_key_maker(self, *args, **kwargs):
-        """Generate hashable keys for the run method
-
-        Gets the database connection name for the function
-        calling the run method and makes a tuple of that
-        along with the query string and parameters.
+        """Generate hashable keys for the query method
 
         The paramaters are scrubbed, turning them into a tuple
         or tuple of tuples, as needed
         """
-        mod_name, func = caller_info(levels_down=2)
-        conn_name = self.funcs.get('%s.%s' % (mod_name, func))
-        conn = self.conns.get(conn_name)
         arg_copy = list(args)
         query = remove_ws(arg_copy.pop(0)).lower()
         tupled_params = tuplify(arg_copy)
-        return ((conn_name, query, tupled_params), {'conn': conn})
+        kwarg_copy = tuple([(k,v) for k,v in kwargs.iteritems()])
+        return (query, tupled_params, kwarg_copy)
         
-    def _submit(self, conn, query, params, headers=False, results=True):
+    def _submit(self, query, params, headers=False, results=True,
+                dictify=False):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
-        cursor = conn.execute(query, params)
+        if not self.conn:
+            self.conn = pyodbc.connect(self.connection_string)
+            self.conn.add_output_converter(pyodbc.SQL_BINARY, bytestohex)
+        cursor = self.conn.execute(query, params)
 
         if results:
             # Jump resultsets until data is found
@@ -124,10 +113,17 @@ class DbConnections(object):
                 raise NoResultSetError()
 
             results = []
-            if headers:
+            if dictify:
+                cols = [column[0] for column in cursor.description]
+                for row in cursor.fetchall():
+                    results.append(dict(zip(cols, row)))
+            elif headers:
                 results.append([column[0] for column in cursor.description])
-            for row in cursor.fetchall():
-                results.append(tuple(row))
+                for row in cursor.fetchall():
+                    results.append(tuple(row))
+            else:
+                for row in cursor.fetchall():
+                    results.append(tuple(row))
             cursor.close()
             return results
         else:
@@ -137,7 +133,8 @@ class DbConnections(object):
     def query(self, query, *params, **kwargs):
         """Execute an SQL query
 
-        Given a select query, query params and a pyodbc connection,
+        Given a select query, query params, a choice of getting
+        column headers, and of getting results at all,
         translate the params to bytearrays as necessary and tuplify
         them.  
         
@@ -146,13 +143,11 @@ class DbConnections(object):
         (ie, question marks) in the query string to the number of
         elements in the associated param.
 
-        Return a tuple of tuples with the query results, where the
-        first element of the tuple is a tuple of the returned column
-        names.
+        Return a tuple or dict with the query results.
         """
-        conn = kwargs.get('conn')
         headers = kwargs.get('headers', False)
         results = kwargs.get('results', True)
+        dictify = kwargs.get('dictify', False)
         new_query = self._reparamaterize_query(query, params)
         new_params = pipe(params, [
             hex_tupler,
@@ -164,33 +159,7 @@ class DbConnections(object):
                          ' Raising exception.')
             raise SqlQueryParamsError()
 
-        if not conn:
-            logger.debug('No connection chosen. Would have run sql: '
-                         '%s, %s' % (new_query, repr(params)))
-            return ()
-        else:
-            logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
-            results = self._submit(conn, new_query, new_params,
-                                   headers=headers, results=results)
-            return results
-
-    def use(self, c):
-        """Takes a db connection name and returns a decorator
-
-        Given the shortname of a db connection that has been
-        registered with the DbConnection object, create a decorator
-        function that links that connection name with the given
-        function in the DbConnections.funcs dict
-        """
-        def dec(f):
-            """Takes a function and returns it unchanged
-
-            Takes a function and registers the function details
-            along with the associated db connection name in 
-            the DbConnections.funcs dict, returning the function
-            without modification
-            """
-            _func = '%s.%s' % (f.__module__, f.func_name)
-            self.funcs[_func] = c
-            return f
-        return dec
+        logger.debug('Running sql: %s, %s' % (new_query, repr(params)))
+        results = self._submit(new_query, new_params, headers=headers,
+                               results=results, dictify=dictify)
+        return results
