@@ -1,0 +1,1 @@
+-e git+https://github.com/obsoleter/funcutils.git@0f603e1237bd326bfe42c4b9f5d6e953bf87948a#egg=funcutils-dev

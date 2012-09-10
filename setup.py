@@ -18,5 +18,6 @@ setup(
     author_email='jeremy@obsoleter.com',
     url='https://github.com/obsoleter/sqlutils',
     license=license,
-    packages=find_packages(exclude=('tests', 'docs'))
+    packages=find_packages(exclude=('tests', 'docs')),
+    py_modules=['sqlutils'],
 )
