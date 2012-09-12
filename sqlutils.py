@@ -125,9 +125,12 @@ class DbConnection(object):
             else:
                 for row in cursor.fetchall():
                     results.append(tuple(row))
+            cursor.commit()
             cursor.close()
             return results
         else:
+            cursor.commit()
+            cursor.close()
             return ()
 
     @memoize(_query_key_maker)
