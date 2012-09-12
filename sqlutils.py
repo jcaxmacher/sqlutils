@@ -100,7 +100,8 @@ class DbConnection(object):
         """Perform the actual query execution with the given
         pyodbc connection, query string, and query parameters"""
         if not self.conn:
-            self.conn = pyodbc.connect(self.connection_string)
+            self.conn = pyodbc.connect(self.connection_string,
+                                       autocommit=True)
             self.conn.add_output_converter(pyodbc.SQL_BINARY, bytestohex)
         cursor = self.conn.execute(query, params)
 
