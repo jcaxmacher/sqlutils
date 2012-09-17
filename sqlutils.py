@@ -93,7 +93,8 @@ class DbConnection(object):
         query = remove_ws(arg_copy.pop(0)).lower()
         tupled_params = tuplify(arg_copy)
         kwarg_copy = tuple([(k,v) for k,v in kwargs.iteritems()])
-        return (query, tupled_params, kwarg_copy)
+        return (self.connection_string.lower(), query, tupled_params,
+                kwarg_copy)
         
     def _submit(self, query, params, headers=False, results=True,
                 dictify=False):
