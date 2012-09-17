@@ -11,7 +11,7 @@ with open('LICENSE') as f:
 
 setup(
     name='sqlutils',
-    version='0.0.2',
+    version='0.0.3',
     description='Simple pyodbc helper methods',
     long_description=readme,
     author='Jeremy Axmacher',
